@@ -1,0 +1,16 @@
+{
+  "name": "xiaohongshu-comment-cli",
+  "version": "1.0.0",
+  "description": "小红书评论 CLI 工具 — Bridge Server + 油猴脚本方案",
+  "scripts": {
+    "server": "node server.js",
+    "help": "node cli.js help",
+    "get": "node cli.js get",
+    "search": "node cli.js search",
+    "my": "node cli.js my",
+    "post": "node cli.js post"
+  },
+  "dependencies": {
+    "ws": "^8.16.0"
+  }
+}
