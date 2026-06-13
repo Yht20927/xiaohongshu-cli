@@ -10,7 +10,7 @@ description: 小红书评论 CLI — 笔记搜索 / 获取评论(含嵌套回复
 - 用户已在 Chrome 中**登录小红书**
 - Chrome 已安装 Tampermonkey 扩展
 - 已安装油猴脚本 `scripts/xiaohongshu.user.js`（`@match *://*.xiaohongshu.com/*`）
-- 依赖已安装：`cd skill-xiaohongshu && npm install`
+- 依赖已安装：`npm install`
 
 ## 通用选项
 
@@ -69,6 +69,7 @@ node cli.js my --count 30
 ```
 
 输出（清洁模式）：
+
 ```json
 [{
   "note_id": "6932e0b3000000001e02f4b2",
@@ -98,7 +99,7 @@ node cli.js note <note_id> --token <xsec_token> --source pc_search
 
 - 若先做过 `search` / `my`，会自动复用沉淀在 `logs/xsec-tokens.json` 的 `xsec_token`，**不需要手动传**。
 - 没有 token + 触发风控（`code=461` / `code=-10000`）时，自动回退到页面 `__INITIAL_STATE__` 抓取（会 SPA 跳到 `/explore/<id>`，浏览器页面会变）。
-- 错误现在会带原始 xhs `code` + `msg`，例如 `xhs[461 NO_PERMISSION] no permission`。
+- 错误现在会带原始 xhs `code` + `msg`，例如 `xhs[461 NO_PERMISSION]`。
 
 ### 获取评论
 
@@ -113,6 +114,7 @@ node cli.js get 6932e0b3000000001e02f4b2 --since 1780238354  # 增量：指定 U
 ```
 
 输出（`--depth 1` 时有 `children`）：
+
 ```json
 [{
   "cid": "6932e0b3000000001e02f4b2",
@@ -147,7 +149,7 @@ node cli.js get 6932e0b3000000001e02f4b2 --since 1780238354  # 增量：指定 U
 ### 单条回复列表
 
 ```bash
-node cli.js replies <cid> <note_id>
+node cli.js replies <note_id> <cid>
 ```
 
 输出格式同 `get` 的结果项（无 `children`）。
@@ -160,11 +162,13 @@ node cli.js post 6932e0b3000000001e02f4b2 "说得对" --reply-to 6932e0b30000000
 ```
 
 输出：
+
 ```json
-{ "cid": "6932e...", "text": "好看！", "time": 17802..., "status": "published" }
+{ "cid": "6932e0b3000000001e02f4b2", "text": "好看！", "time": 178023..., "status": "published" }
 ```
 
 失败：
+
 ```json
 { "error": "评论发送失败", "code": -1 }
 ```
@@ -200,12 +204,15 @@ node cli.js analyze <note_id>
 
 调用 LLM 批量分析评论，返回情感/分类/优先级。需配置 `config.json` 中的 `llm.api_key`。
 
+支持环境变量 `OPENAI_API_KEY`。
+
 ### LLM 回复建议
 
 ```bash
 node cli.js suggest <note_id>              # 仅建议
 node cli.js suggest <note_id> --auto       # 自动发布
 node cli.js suggest <note_id> --min-priority 4
+node cli.js suggest <note_id> --interval 45000  # 自定义发布间隔（毫秒）
 ```
 
 ### 运营仪表盘
@@ -222,6 +229,14 @@ node cli.js dashboard --note <note_id> --days 14
 ```bash
 node cli.js profile <user_id>
 ```
+
+### 连接状态
+
+```bash
+node cli.js status
+```
+
+查看 Bridge Server 连接状态，确认油猴脚本已连接。
 
 ---
 
@@ -259,7 +274,7 @@ node cli.js profile <user_id>
 | 症状 | 原因 | 解法 |
 |------|------|------|
 | `Bridge Server 未启动` | server.js 未运行 | 启动 `node server.js` |
-| `Unauthorized` | token 不匹配 | 检查 `config.json` 中的 `bridge.token` 是否与油猴脚本一致 |
+| `Unauthorized` | token 不匹配 | 检查 `config.json` 中的 `bridge.token` |
 | `axios not captured` | 页面 webpack 未加载或 axios 找不到 | 刷新 xiaohongshu.com 页面，等待完全加载 |
 | 搜索/获取返回空数组 `[]` | 未登录或油猴未连接 | 确认在 xiaohongshu.com 已登录；检查 `node cli.js status` |
 | 油猴脚本报注册失败 | server 未启动或端口不对 | 确认 server 在 19424 端口运行 |
@@ -288,6 +303,58 @@ logs/
 - 大结果（`get`/`search`/`my`/`replies`）落地为独立 JSON 文件
 - 小结果（`post`/`ping`/`stop`）内联在 audit.json
 - `--no-log` 可跳过记录
+
+## 配置
+
+```json
+{
+  "bridge": {
+    "host": "127.0.0.1",
+    "port": 19424,
+    "token": "",
+    "heartbeatInterval": 30000,
+    "heartbeatTimeout": 10000,
+    "heartbeatMaxFailures": 3,
+    "requestTimeout": 30000
+  },
+  "llm": {
+    "api_key": "",
+    "base_url": "https://api.openai.com/v1",
+    "model": "gpt-4o-mini",
+    "max_tokens": 4096,
+    "timeout_ms": 60000,
+    "max_retries": 3
+  }
+}
+```
+
+- `bridge.token` 可通过环境变量 `XHS_BRIDGE_TOKEN` 设置
+- `llm.api_key` 可通过环境变量 `OPENAI_API_KEY` 设置
+
+## 架构
+
+```
+xiaohongshu/
+├── cli.js                    # CLI 入口
+├── server.js                 # Bridge Server 入口
+├── config.json               # 配置
+├── lib/
+│   ├── commands/             # 命令模块
+│   ├── server/               # Bridge Server 组件（registry, ws-hub, router）
+│   ├── client/               # Bridge Client（HTTP 请求封装）
+│   ├── shared/               # 共享工具
+│   ├── audit.js              # 审计日志
+│   ├── token-cache.js        # xsec_token 缓存
+│   └── llm.js                # LLM 封装
+├── scripts/
+│   └── xiaohongshu.user.js   # 油猴脚本
+├── logs/
+│   ├── audit.json
+│   └── results/
+├── test/                     # 单元测试
+├── SKILL.md                  # Agent 技能文档
+└── package.json
+```
 
 ## 与抖音 Skill 的关键差异
 

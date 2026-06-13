@@ -34,8 +34,6 @@ let noLog = false;
 async function bridgeCall(expression, awaitPromise = true) {
   const resp = await bridge.call({ site: SITE, expression, awaitPromise });
   if (!resp.ok) throw new Error(resp.error || 'Bridge Server 返回未知错误');
-  // 关键修复：xhs 页面响应拦截器把所有 key 驼峰化（noteCard / xsecToken / likedCount...），
-  // 这里递归转回 snake_case，让 commands/* 解析按 raw HTTP 字段名生效。
   const v = convertKeys(resp.value);
   // xhs envelope 检测：{ code, msg, data }；code !== 0 视为业务错误
   if (v && typeof v === 'object' && 'code' in v && v.code !== 0 && v.code !== '0') {
@@ -79,8 +77,7 @@ async function loggedCall(endpoint, params, expression) {
     // DEBUG: 把原始 data 落盘，便于诊断字段路径
     if (process.env.XHS_DUMP === '1') {
       try {
-        const fs = require('fs');
-        const fp = require('path').join(__dirname, 'logs', 'raw-' + endpoint + '-' + Date.now() + '.json');
+        const fp = path.join(__dirname, 'logs', 'raw-' + endpoint + '-' + Date.now() + '.json');
         fs.writeFileSync(fp, JSON.stringify(result, null, 2));
         console.error('[XHS_DUMP] ' + fp);
       } catch(e) {}
@@ -137,6 +134,7 @@ Xiaohongshu Comment CLI (Bridge Framework)
   node cli.js dashboard --note <note_id> --days 14
   node cli.js log [--tail N] [--note <id>] [--failed]
   node cli.js profile <user_id>                   用户交互历史
+  node cli.js status                              查看 Bridge 连接状态
 
   通用选项： --raw（原始输出） --no-log（本次不记录日志）
 
@@ -160,6 +158,18 @@ async function main() {
 
   if (!cmd || cmd === 'help' || cmd === '--help') {
     printHelp();
+    return;
+  }
+
+  // 内建命令
+  if (cmd === 'status') {
+    try {
+      const st = await bridge.status();
+      console.log(JSON.stringify(st, null, 2));
+    } catch (e) {
+      console.error(`错误: ${e.message}`);
+      process.exit(1);
+    }
     return;
   }
 

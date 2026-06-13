@@ -12,6 +12,7 @@ const { Router } = require('./lib/server/router');
 
 // 加载配置
 const configPath = path.join(__dirname, 'config.json');
+const examplePath = path.join(__dirname, 'config.example.json');
 let config;
 try {
   config = JSON.parse(fs.readFileSync(configPath, 'utf8'));
@@ -22,27 +23,31 @@ try {
 }
 
 // 自动生成 token（如果未配置）
-if (!config.bridge.token) {
+if (!config.bridge?.token) {
   config.bridge.token = crypto.randomBytes(24).toString('hex');
-  fs.writeFileSync(configPath, JSON.stringify(config, null, 2) + '\n');
-  console.error('[server] 已自动生成 access token 并写入 config.json');
+  try {
+    fs.writeFileSync(configPath, JSON.stringify(config, null, 2) + '\n');
+    console.error('[server] 已自动生成 access token 并写入 config.json');
+  } catch (e) {
+    console.error('[server] 无法写入 config.json:', e.message);
+  }
 }
 
 // 初始化组件
 const registry = new ConnectionRegistry();
 const wsHub = new WebSocketHub({
   registry,
-  port: config.bridge.port,
-  host: config.bridge.host,
-  heartbeatInterval: config.bridge.heartbeatInterval,
-  heartbeatTimeout: config.bridge.heartbeatTimeout,
-  heartbeatMaxFailures: config.bridge.heartbeatMaxFailures,
+  port: config.bridge?.port || 19424,
+  host: config.bridge?.host || '127.0.0.1',
+  heartbeatInterval: config.bridge?.heartbeatInterval,
+  heartbeatTimeout: config.bridge?.heartbeatTimeout,
+  heartbeatMaxFailures: config.bridge?.heartbeatMaxFailures,
 });
 const router = new Router({
   registry,
   wsHub,
-  requestTimeout: config.bridge.requestTimeout || 30000,
-  token: config.bridge.token,
+  requestTimeout: config.bridge?.requestTimeout || 30000,
+  token: config.bridge?.token || '',
 });
 
 // 创建 HTTP Server
@@ -54,8 +59,8 @@ const httpServer = http.createServer((req, res) => {
 wsHub.attach(httpServer);
 
 // 启动监听
-const bridgeHost = config.bridge.host;
-const bridgePort = config.bridge.port;
+const bridgeHost = config.bridge?.host || '127.0.0.1';
+const bridgePort = config.bridge?.port || 19424;
 httpServer.listen(bridgePort, bridgeHost, () => {
   console.error(`[server] Bridge Server ready — http://${bridgeHost}:${bridgePort}`);
   console.error(`[server] Health:  http://${bridgeHost}:${bridgePort}/api/health`);
