@@ -3,3 +3,4 @@ node_modules/
 logs/
 *.pid
 config.json
+用户配置.md

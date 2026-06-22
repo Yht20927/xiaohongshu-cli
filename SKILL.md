@@ -1,367 +1,201 @@
 ---
-name: xiaohongshu-comment
-description: 小红书评论 CLI — 笔记搜索 / 获取评论(含嵌套回复) / 发表回复评论 / 删除评论 / 点赞。Bridge Server + 油猴脚本方案，页面 axios 自动签名。
+name: xiaohongshu-cli
+description: 小红书运营 Skill — 互动引流 / 推广引流 / 评论生成。基于 xiaohongshu-cli 执行实际操作。
 ---
 
-# 小红书评论 Skill
+# 小红书运营 Skill
+
+## ⚠️ 核心安全规则（违反任意一条 → 立即停止本轮）
+
+> **以下规则具有最高优先级，必须在每个执行步骤中严格遵守。**
+
+### 🔴 规则 1：命令串行 + 强制随机间隔
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│  ❌ 严禁并发执行任何 CLI 命令                                  │
+│  ❌ 严禁使用固定间隔（必须每次重新随机）                         │
+│  ❌ 严禁跳过 sleep（即使"感觉"不需要）                          │
+│                                                              │
+│  ✅ 所有命令必须逐条串行执行                                   │
+│  ✅ 每条命令完成后必须等待 40-55 秒随机间隔                      │
+│  ✅ 每次等待前必须重新生成随机数                                │
+└─────────────────────────────────────────────────────────────┘
+```
+
+**强制执行模板**（复制使用，不要修改结构）：
+
+```bash
+# ═══ 执行单条命令的模板 ═══
+execute_with_delay() {
+  local cmd="$1"
+  local delay=$((40 + RANDOM % 16))  # 40-55 秒随机值
+  
+  echo "▶ 执行: $cmd"
+  eval "$cmd"
+  
+  if [ $? -eq 0 ]; then
+    echo "✓ 成功，等待 ${delay} 秒..."
+    sleep "$delay"
+  else
+    echo "✗ 失败，跳过等待"
+  fi
+}
+
+# ═══ 使用示例 ═══
+execute_with_delay 'node cli.js search "AI Agent" --count 20'
+execute_with_delay 'node cli.js get <note_id> --all --depth 1'
+execute_with_delay 'node cli.js post <note_id> "评论内容"'
+```
+
+**为什么必须这样做**：
+- 小红书对高频操作敏感，并发或过快间隔会触发风控
+- 风控后果：限流、验证码、封号
+- 宁可慢不可快 — 如果拿不准，取更长的间隔
+
+### 🔴 规则 2：不重复回复
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│  ❌ 同一条评论 cid 一生只能被回复一次（跨日跨轮均生效）           │
+│  ❌ 同一作者短期内不重复（≥ 7 天冷却期）                        │
+│                                                              │
+│  ✅ 执行前必须初始化 REPLIED_CIDS 集合                         │
+│  ✅ 每次回复前必须检查 cid 是否在集合中                         │
+│  ✅ 回复成功后必须将 cid 加入集合                               │
+└─────────────────────────────────────────────────────────────┘
+```
+
+**强制执行流程**：
+
+```bash
+# ═══ Step 1: 初始化 REPLIED_CIDS ═══
+# 获取所有已回复的 cid
+node cli.js events --type post | grep -o '"reply_to":"[^"]*"' | cut -d'"' -f4 > /tmp/replied_cids.txt
+
+# ═══ Step 2: 检查是否已回复 ═══
+is_replied() {
+  local cid="$1"
+  grep -q "$cid" /tmp/replied_cids.txt 2>/dev/null
+  return $?
+}
+
+# ═══ Step 3: 回复前检查 ═══
+if is_replied "target_cid"; then
+  echo "⏭ 跳过：已回复过该评论"
+else
+  execute_with_delay 'node cli.js post <note_id> "内容" --reply-to target_cid'
+  echo "target_cid" >> /tmp/replied_cids.txt  # 记录已回复
+fi
+```
+
+### 🔴 规则 3：内容禁令
+
+```
+❌ 不直贴完整 GitHub 链接（小红书会限流）
+   ✅ 可写"GitHub 上搜 yht20927"或"主页有链接"
+
+❌ 不承诺效果、不透露隐私、不攻击他人、不竞品贴脸
+❌ 不发纯广告、刷屏、诱导点击
+❌ 不提具体收益、保证效果
+❌ 不使用同一份固定模板连发（每轮 ≥ 3 种风格）
+❌ 不直接留微信号、外链（小红书社区规范）
+```
 
 ## 前置条件
 
-- 用户已在 Chrome 中**登录小红书**
-- Chrome 已安装 Tampermonkey 扩展
-- 已安装油猴脚本 `scripts/xiaohongshu.user.js`（`@match *://*.xiaohongshu.com/*`）
-- 依赖已安装：`npm install`
+- 已安装并启动 `xiaohongshu-cli`（Bridge Server 运行中）
+- 油猴脚本已连接（`node cli.js status` 确认）
+- 用户已在 Chrome 中登录小红书
 
-## 通用选项
+## 文件结构
 
-所有命令均支持以下选项：
+本 Skill 由以下模块组成，执行前按顺序加载：
 
-| 选项 | 作用 |
-|------|------|
-| `--raw` | 输出完整 API 原始 JSON（调试用） |
-| `--no-log` | 本次执行不写入审计日志 |
+| 文件 | 作用 | 何时加载 |
+|------|------|----------|
+| `用户配置.md` | 账号信息、基础配置 | 每次执行 |
+| `全局规则.md` | 硬性禁令、评论筛选规则、安全规则 | 每次执行 |
+| `执行模板.md` | **必须使用的执行模板和函数** | 每次执行 |
+| `快速参考卡.md` | 快速查阅必须记住的规则和函数 | 每次执行 |
+| `评论风格指南.md` | 小红书评论风格模板 | 生成评论时 |
+| `互动引流.md` | 工作流：搜索热门话题互动 | 执行互动任务时 |
+| `推广引流.md` | 工作流：针对特定目标推广 | 执行推广任务时 |
 
-## Bridge Server 生命周期（关键）
+## 评论筛选规则
+
+评论筛选规则已整合到 `全局规则.md` 第 4 节，包含：
+- **跳过类型**：祈愿/接龙、简短感叹、求购/求渠道、祝福/客套
+- **优先回复类型**：笔记作者评论、有深度提问、讨论性评论、分享经验
+- **判断标准**：有实质内容、可能引发讨论、话题相关、能体现价值
+
+`推广引流.md` 在此基础上增加了推广场景专用的筛选规则（笔记筛选 + 评论筛选）。
+
+## 执行协议
+
+### 1. 启动前检查（必须全部完成）
 
 ```
-操作顺序: 确保 server 运行 → 确认油猴已连接 → 操作...
+□ 加载 用户配置.md
+□ 加载 全局规则.md（含评论筛选过滤规则）
+□ 加载 执行模板.md（必须使用的执行模板和函数）
+□ 确认 Bridge Server 在线：bash ~/.claude/skills/xiaohongshu-cli/scripts/bridge.sh ensure
+□ 确认油猴连接：node cli.js status
+□ 初始化 REPLIED_CIDS 集合（使用执行模板.md中的 init_replied_cids 函数）
 ```
 
-### 启动 Bridge Server
+### 2. 工作流选择
 
-```bash
-node server.js
-```
+根据任务目标选择对应工作流：
 
-用 `run_background` 运行，等待输出 `[server] Bridge Server ready — http://127.0.0.1:19424`。
+- **互动引流**：提升账号活跃度、增加曝光 → 加载 `互动引流.md`
+  - 适用场景：搜索热门话题、参与讨论、增加互动
+  - 核心流程：获取自己的笔记 → 生成关键词 → 搜索 → 筛选 → 评论/回复
 
-首次启动会自动生成 `bridge.token` 并写入 `config.json`。
+- **推广引流**：针对特定话题/作者、引导流量 → 加载 `推广引流.md`
+  - 适用场景：推广自己的内容、与目标作者互动
+  - 核心流程：确定目标 → 搜索/筛选 → 生成推广内容 → 评论/回复
 
-### 确认油猴连接
+### 3. 评论生成
 
-```bash
-node cli.js status   # 或 curl http://127.0.0.1:19424/api/status
-```
+生成评论时加载 `评论风格指南.md`，确保符合小红书社区调性：
+- 互动引流：优先使用热情分享型、共鸣互动型、好奇提问型
+- 推广引流：优先使用专业解读型、解答引导型、共鸣分享型
 
-确保 `xiaohongshu.com` 下已有活跃连接。
+### 4. 执行后记录
 
-### 操作完毕
+每个工作流执行完成后，输出执行报告（参考各工作流的 Step 6/7）。
 
-```bash
-# 按 Ctrl+C 停止 server，或直接关闭终端
-```
+## 与 xiaohongshu-cli 的关系
 
-### 签名链路说明
-
-- 油猴脚本注入 `window.__bridge` 到页面上下文，获取 webpack 中的 axios 实例。
-- **所有签名（x-s/x-s-common/x-t/x-rap-param）由页面 axios 拦截器自动注入**，无需手动处理。
-- CLI 通过 Bridge Server HTTP API 发送 eval 表达式，油猴脚本在页面上下文中执行并返回结果。
-
----
-
-## 命令参考
-
-### 我的笔记
-
-```bash
-node cli.js my
-node cli.js my --count 30
-```
-
-输出（清洁模式）：
-
-```json
-[{
-  "note_id": "6932e0b3000000001e02f4b2",
-  "title": "笔记标题",
-  "desc": "笔记描述前80字...",
-  "time": 1780238354,
-  "author": "作者昵称",
-  "stats": { "likes": 1234, "comments": 56, "collects": 89, "shares": 3 }
-}]
-```
-
-### 搜索笔记
-
-```bash
-node cli.js search "关键词"
-node cli.js search "关键词" --page 2 --count 20
-```
-
-输出格式同 `my`。
-
-### 获取笔记详情
-
-```bash
-node cli.js note <note_id>
-node cli.js note <note_id> --token <xsec_token> --source pc_search
-```
-
-- 若先做过 `search` / `my`，会自动复用沉淀在 `logs/xsec-tokens.json` 的 `xsec_token`，**不需要手动传**。
-- 没有 token + 触发风控（`code=461` / `code=-10000`）时，自动回退到页面 `__INITIAL_STATE__` 抓取（会 SPA 跳到 `/explore/<id>`，浏览器页面会变）。
-- 错误现在会带原始 xhs `code` + `msg`，例如 `xhs[461 NO_PERMISSION]`。
-
-### 获取评论
-
-```bash
-node cli.js get 6932e0b3000000001e02f4b2                  # 默认 1 页 20 条
-node cli.js get 6932e0b3000000001e02f4b2 --pages 5        # 指定页数
-node cli.js get 6932e0b3000000001e02f4b2 --all             # 全部一级评论
-node cli.js get 6932e0b3000000001e02f4b2 --all --depth 1   # 含嵌套回复
-node cli.js get 6932e0b3000000001e02f4b2 --new             # 增量：只拉上次获取之后的新评论
-node cli.js get 6932e0b3000000001e02f4b2 --new --depth 1   # 增量 + 嵌套回复
-node cli.js get 6932e0b3000000001e02f4b2 --since 1780238354  # 增量：指定 Unix 时间戳
-```
-
-输出（`--depth 1` 时有 `children`）：
-
-```json
-[{
-  "cid": "6932e0b3000000001e02f4b2",
-  "text": "一级评论内容",
-  "likes": 1,
-  "replies": 3,
-  "time": 1780238354,
-  "pinned": false,
-  "user": { "nickname": "用户", "user_id": "123", "avatar": "https://..." },
-  "children": [{
-    "cid": "6932e0b3000000001e02f4b3",
-    "text": "回复内容",
-    "likes": 0,
-    "replies": 0,
-    "time": 1780239000,
-    "user": { "nickname": "回复者", "user_id": "456", "avatar": "https://..." }
-  }]
-}]
-```
-
-- `--depth 1`：拉所有一级评论 + 每条下所有回复
-- `--depth 2`：递归两层（回复的回复）
-
-#### 增量获取（`--new` / `--since`）
-
-基于时间戳过滤，只拉取新评论，请求数最少。
-
-**`--new`**：自动从审计日志中找到该笔记上次成功 `get` 的时间，只拉此后的新评论。无历史记录时退化为全量。
-
-**`--since <unix_ts>`**：显式指定 Unix 时间戳（秒），只拉 `create_time > ts` 的评论。
-
-### 单条回复列表
-
-```bash
-node cli.js replies <note_id> <cid>
-```
-
-输出格式同 `get` 的结果项（无 `children`）。
-
-### 发表评论
-
-```bash
-node cli.js post 6932e0b3000000001e02f4b2 "好看！"
-node cli.js post 6932e0b3000000001e02f4b2 "说得对" --reply-to 6932e0b3000000001e02f4b3
-```
-
-输出：
-
-```json
-{ "cid": "6932e0b3000000001e02f4b2", "text": "好看！", "time": 178023..., "status": "published" }
-```
-
-失败：
-
-```json
-{ "error": "评论发送失败", "code": -1 }
-```
-
-> **注意**：小红书 API 有风控机制，频繁操作可能触发验证码。评论内容不宜过短或包含敏感词。
-
-### 删除评论
-
-```bash
-node cli.js delete <note_id> <comment_id>
-```
-
-### 点赞评论
-
-```bash
-node cli.js like <note_id> <comment_id>
-```
-
-### 查看操作日志
-
-```bash
-node cli.js log                              # 最近 10 条操作
-node cli.js log --tail 20                    # 最近 20 条
-node cli.js log --note <note_id>             # 指定笔记的所有操作
-node cli.js log --failed                     # 只看失败的
-```
-
-### LLM 分析
-
-```bash
-node cli.js analyze <note_id>
-```
-
-调用 LLM 批量分析评论，返回情感/分类/优先级。需配置 `config.json` 中的 `llm.api_key`。
-
-支持环境变量 `OPENAI_API_KEY`。
-
-### LLM 回复建议
-
-```bash
-node cli.js suggest <note_id>              # 仅建议
-node cli.js suggest <note_id> --auto       # 自动发布
-node cli.js suggest <note_id> --min-priority 4
-node cli.js suggest <note_id> --interval 45000  # 自定义发布间隔（毫秒）
-```
-
-### 运营仪表盘
-
-```bash
-node cli.js dashboard
-node cli.js dashboard --note <note_id> --days 14
-```
-
-生成本地自包含 HTML 仪表盘，含情感分布饼图、评论趋势折线图。
-
-### 用户画像
-
-```bash
-node cli.js profile <user_id>
-```
-
-### 连接状态
-
-```bash
-node cli.js status
-```
-
-查看 Bridge Server 连接状态，确认油猴脚本已连接。
-
----
-
-## 智能回复工作流
-
-配合策略文件 `reply-strategy.md`，agent 可自动判断哪些评论需要回复、生成回复内容并发布。
-
-### 首次执行
+本 Skill 负责**策略层**（决定做什么、怎么做），xiaohongshu-cli 负责**执行层**（实际调用 API）。
 
 ```
-1. 读取策略文件（reply-strategy.md）
-2. node cli.js get <note_id> --all --depth 1
-3. 根据策略逐条判断：
-     → 跳过 → 记录原因
-     → 需回复 → 根据风格指南生成回复内容
-              → node cli.js post <note_id> "内容" --reply-to <cid>
-4. 输出执行报告
+本 Skill（策略）→ 生成指令 → xiaohongshu-cli（执行）→ 调用 API → 小红书
 ```
 
-### 后续增量执行
+## 命令映射
 
-```
-1. 读取策略文件
-2. node cli.js get <note_id> --new --depth 1   # 只拉新评论
-3. 对新评论逐条判断并回复
-4. 输出执行报告（标注增量模式 + 跳过旧评论数）
-```
+| Skill 动作 | CLI 命令 |
+|------------|----------|
+| 搜索笔记 | `node cli.js search "关键词"` |
+| 获取评论 | `node cli.js get <note_id> --page 1 --depth 1` |
+| 发表评论 | `node cli.js post <note_id> "内容"` |
+| 回复评论 | `node cli.js post <note_id> "内容" --reply-to <cid>` |
+| 查看日志 | `node cli.js log --tail 20` |
 
-> `--new` 自动从审计日志中找到上次拉取时间。
+**⚠️ 重要：获取评论必须使用 `--page 1` 限制**
+- ❌ 错误：`node cli.js get <note_id> --all --depth 1`（获取所有评论，容易触发风控）
+- ✅ 正确：`node cli.js get <note_id> --page 1 --depth 1`（只获取第一页，安全）
 
----
+## 执行检查清单
 
-## 故障排查
+**每执行 5 条命令后，必须检查**：
+- [ ] 是否所有命令都是串行执行的？
+- [ ] 每条命令之间是否等待了 40-55 秒？
+- [ ] 是否检查了 REPLIED_CIDS？
+- [ ] 是否使用了 ≥ 3 种不同风格？
+- [ ] 是否违反了内容禁令？
+- [ ] 获取评论时是否使用了 --page 1 限制？
 
-| 症状 | 原因 | 解法 |
-|------|------|------|
-| `Bridge Server 未启动` | server.js 未运行 | 启动 `node server.js` |
-| `Unauthorized` | token 不匹配 | 检查 `config.json` 中的 `bridge.token` |
-| `axios not captured` | 页面 webpack 未加载或 axios 找不到 | 刷新 xiaohongshu.com 页面，等待完全加载 |
-| 搜索/获取返回空数组 `[]` | 未登录或油猴未连接 | 确认在 xiaohongshu.com 已登录；检查 `node cli.js status` |
-| 油猴脚本报注册失败 | server 未启动或端口不对 | 确认 server 在 19424 端口运行 |
-| `Request timeout` | 油猴脚本未响应 | 刷新 xiaohongshu.com 页面，确认油猴脚本已激活 |
-| `--new` 无历史记录仍拉全量 | 该笔记未被拉取过 | 预期行为，首次执行 `--new` 等价于 `--all` |
-| API 返回 461 | 无权限访问该笔记 | 可能不是自己的笔记或笔记已删除；新版本会显示 `xhs[461 NO_PERMISSION]` |
-| `xhs[-10000 RISK_CONTROL]` | 接口被风控 | note 命令会自动回退到 page；其他命令请降低频率或刷新页面登录态 |
-| `getNote` 报错 / 取不到 note | 缺 `xsec_token` | 先执行 `search` 或 `my` 写入 token 缓存；或手动 `--token` 传入 |
-| 评论发布失败 | 风控拦截 | 换内容重试（更长/更自然）、降低频率 |
-
-## 审计日志
-
-所有 CLI 操作自动记录到 `logs/audit.json`，便于追踪和增量拉取。
-
-```
-logs/
-├── audit.json              ← 操作元数据（sessions → operations → apiCalls）
-└── results/
-    ├── get-<note_id>-<ts>.json    ← 评论获取的完整结果
-    ├── search-<kw>-<ts>.json      ← 搜索结果
-    └── ...
-```
-
-- 每个操作记录：命令、参数、开始/结束时间、耗时、成功/失败、摘要
-- 每个 API 调用记录：端点、参数、耗时、返回条数
-- 大结果（`get`/`search`/`my`/`replies`）落地为独立 JSON 文件
-- 小结果（`post`/`ping`/`stop`）内联在 audit.json
-- `--no-log` 可跳过记录
-
-## 配置
-
-```json
-{
-  "bridge": {
-    "host": "127.0.0.1",
-    "port": 19424,
-    "token": "",
-    "heartbeatInterval": 30000,
-    "heartbeatTimeout": 10000,
-    "heartbeatMaxFailures": 3,
-    "requestTimeout": 30000
-  },
-  "llm": {
-    "api_key": "",
-    "base_url": "https://api.openai.com/v1",
-    "model": "gpt-4o-mini",
-    "max_tokens": 4096,
-    "timeout_ms": 60000,
-    "max_retries": 3
-  }
-}
-```
-
-- `bridge.token` 可通过环境变量 `XHS_BRIDGE_TOKEN` 设置
-- `llm.api_key` 可通过环境变量 `OPENAI_API_KEY` 设置
-
-## 架构
-
-```
-xiaohongshu/
-├── cli.js                    # CLI 入口
-├── server.js                 # Bridge Server 入口
-├── config.json               # 配置
-├── lib/
-│   ├── commands/             # 命令模块
-│   ├── server/               # Bridge Server 组件（registry, ws-hub, router）
-│   ├── client/               # Bridge Client（HTTP 请求封装）
-│   ├── shared/               # 共享工具
-│   ├── audit.js              # 审计日志
-│   ├── token-cache.js        # xsec_token 缓存
-│   └── llm.js                # LLM 封装
-├── scripts/
-│   └── xiaohongshu.user.js   # 油猴脚本
-├── logs/
-│   ├── audit.json
-│   └── results/
-├── test/                     # 单元测试
-├── SKILL.md                  # Agent 技能文档
-└── package.json
-```
-
-## 与抖音 Skill 的关键差异
-
-| 项目 | 抖音 | 小红书 |
-|------|------|--------|
-| 内容 ID | `aweme_id` | `note_id` |
-| Bridge 端口 | `19422` | `19424` |
-| Bridge 命名空间 | `window.__bridge` (fetch) | `window.__bridge` (axios) |
-| API 签名 | URL 参数 + Cookie | 页面 axios 拦截器自动注入 |
-| 额外功能 | — | `delete`、`like`、`note`（笔记详情） |
+**如果发现违规**：立即停止本轮，记录原因到执行报告。

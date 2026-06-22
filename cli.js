@@ -134,6 +134,16 @@ Xiaohongshu Comment CLI (Bridge Framework)
   node cli.js dashboard --note <note_id> --days 14
   node cli.js log [--tail N] [--note <id>] [--failed]
   node cli.js profile <user_id>                   用户交互历史
+
+  反馈闭环（基于 SQLite 记忆层）：
+  node cli.js corpus search <keyword>        搜索历史成功回复语料
+  node cli.js corpus recent [--limit N]      最近发布过的回复
+  node cli.js corpus stats                    语料统计
+  node cli.js failures                        失败模式 top 10（按 hit_count）
+  node cli.js failures --recent               最近失败模式
+  node cli.js failures --mitigate <sig> "<缓解措施>"
+  node cli.js dedup "<候选文本>"              查重护栏：是否曾经发过
+
   node cli.js status                              查看 Bridge 连接状态
 
   通用选项： --raw（原始输出） --no-log（本次不记录日志）
@@ -182,7 +192,9 @@ async function main() {
 
   try {
     const result = await handler(ctx, args.slice(1));
-    if (result !== undefined) {
+    // dashboard / log 自己已打印；其它命令返回值统一 JSON 输出。
+    const SILENT = new Set(['dashboard', 'log']);
+    if (result !== undefined && !SILENT.has(cmd)) {
       console.log(JSON.stringify(result, null, 2));
     }
   } catch (e) {

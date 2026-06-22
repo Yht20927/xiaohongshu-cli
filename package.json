@@ -1,8 +1,11 @@
 {
   "name": "xiaohongshu-comment-cli",
-  "version": "1.0.0",
-  "description": "小红书评论 CLI 工具 — Bridge Server + 油猴脚本方案",
+  "version": "2.0.0",
+  "description": "小红书评论 CLI 工具 — Bridge Server + 油猴脚本方案，含记忆层 / 反馈闭环 / LLM 助理",
   "main": "lib/client/bridge-client.js",
+  "bin": {
+    "xhs": "./cli.js"
+  },
   "engines": {
     "node": ">=18.0.0"
   },
@@ -13,9 +16,14 @@
     "search": "node cli.js search",
     "my": "node cli.js my",
     "post": "node cli.js post",
-    "test": "node test/camelToSnake.test.js && node test/helpers.test.js && node test/parseResponse.test.js"
+    "test": "vitest run",
+    "test:watch": "vitest"
   },
   "dependencies": {
+    "better-sqlite3": "^11.10.0",
     "ws": "^8.16.0"
+  },
+  "devDependencies": {
+    "vitest": "^4.1.8"
   }
 }
