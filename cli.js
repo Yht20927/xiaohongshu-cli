@@ -143,6 +143,8 @@ Xiaohongshu Comment CLI (Bridge Framework)
   node cli.js failures --recent               最近失败模式
   node cli.js failures --mitigate <sig> "<缓解措施>"
   node cli.js dedup "<候选文本>"              查重护栏：是否曾经发过
+  node cli.js replied                         已回复 cid 列表（--json --note <id>）
+  node cli.js replied --count                 已回复总数
 
   node cli.js status                              查看 Bridge 连接状态
 

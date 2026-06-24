@@ -70,8 +70,8 @@ execute_with_delay 'node cli.js post <note_id> "评论内容"'
 
 ```bash
 # ═══ Step 1: 初始化 REPLIED_CIDS ═══
-# 获取所有已回复的 cid
-node cli.js events --type post | grep -o '"reply_to":"[^"]*"' | cut -d'"' -f4 > /tmp/replied_cids.txt
+# 从 SQLite comments 表获取所有已回复的 cid
+node cli.js replied > /tmp/replied_cids.txt
 
 # ═══ Step 2: 检查是否已回复 ═══
 is_replied() {
