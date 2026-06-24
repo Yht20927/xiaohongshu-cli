@@ -25,7 +25,7 @@ node cli.js post <note_id> "内容"
 
 | 命令 | 用途 | 示例 |
 |------|------|------|
-| `my` | 我的笔记列表 | `node cli.js my --count 30` |
+| `my` | 我的笔记列表 | `node cli.js my --count 20` |
 | `search` | 搜索笔记 | `node cli.js search "关键词" --page 1` |
 | `note` | 笔记详情 | `node cli.js note <note_id>` |
 | `get` | 获取评论 | `node cli.js get <note_id> --all --depth 1` |
